@@ -36,6 +36,7 @@ export class Engine {
       kc: 50, k1: 420, c1: 0.2, c0: 0.004,                  // cantilever suspension (Zener + dashpot)
       mu: 0.3, hc: 2.0,                                     // friction, contact damping (s/m)
       azimuth: 1.2 * Math.PI / 180,
+      xtalk: 2.2e-6,                                        // armature cross-coupling (s): -17 dB at 10 kHz
       Lc: 0.45, Rc: 600, Cl: 200e-12, Rl: 47000,            // cartridge coil + cable + preamp load
       volume: 1, hum: 0, rumble: 1, flutter: 1, preNoise: 1e-5,
     };
@@ -141,7 +142,7 @@ export class Engine {
 
 // Hot state lives in one Float64Array (no GC, no hidden-class churn); these are named views onto it.
 export const FIELDS = ['thp', 'wp', 'al', 'ald', 'zb', 'zbd', 'xi', 'xid', 'ze', 'zed', 'mwx', 'mwz', 'gn', 'xgP', 'hcP',
-  'dpIn', 'dpOut', 'zs', 'zcue', 'rp', 'wj0', 't', 'drift', 'dragTq', 'bs', 'vtfS'];
+  'dpIn', 'dpOut', 'zs', 'zcue', 'rp', 'wj0', 't', 'drift', 'dragTq', 'bs', 'vtfS', 'gL', 'gR'];
 FIELDS.forEach((k, i) => Object.defineProperty(Engine.prototype, k, {
   get() { return this.s[i]; }, set(v) { this.s[i] = v; },
 }));

@@ -38,6 +38,7 @@ export function process(e, outL, outR, N) {
   const { kc, k1, c0, mu, kH, mt, mEff, vtf } = p, cH = 1.5 * p.hc;
   const dC = (mt / (dt * dt) / (1.5 * kH)) ** 2, nC = kH * dC * Math.sqrt(dC), kC = 1.5 * kH * Math.sqrt(dC);
   const kmw = 1 - Math.exp(-dt * k1 / p.c1), Ih = mEff * LE * LE, kq = mEff * 9e4, cq = 2 * mEff * 300;
+  const kX = p.xtalk * fsF;   // armature cross-coupling: leak = xtalk * d(other channel)/dt
   const tqAS = p.antiskate * LE, CAZ = Math.cos(p.azimuth), SAZ = Math.sin(p.azimuth);
   const [lb0, lb1, lb2, la1, la2] = e.lcr, [rb0, rb1, rb2, ra1, ra2] = e.riaaF, [sb0, sb1, sb2, sa1, sa2] = e.riaaS;
   const kv = onePole(1.5, e.fs), kr1 = onePole(30, e.fs), kr2 = onePole(6, e.fs), kdr = onePole(1.5, e.fs);
@@ -47,7 +48,7 @@ export function process(e, outL, outR, N) {
   let l1 = fz[0], l2 = fz[1], l3 = fz[2], l4 = fz[3], r1 = fz[4], r2 = fz[5], r3 = fz[6], r4 = fz[7];
   let s1 = fz[8], s2 = fz[9], s3 = fz[10], s4 = fz[11];
   const S = e.s;
-  let thp = S[0], wp = S[1], al = S[2], ald = S[3], zb = S[4], zbd = S[5], xi = S[6], xid = S[7], ze = S[8], zed = S[9], mwx = S[10], mwz = S[11], gn = S[12], xgP = S[13], hcP = S[14], dpIn = S[15], dpOut = S[16], zs = S[17], zcue = S[18], rp = S[19] | 0, wj0 = S[20] | 0, t = S[21], drift = S[22], dragTq = S[23], bs = S[24], vtfS = S[25];
+  let thp = S[0], wp = S[1], al = S[2], ald = S[3], zb = S[4], zbd = S[5], xi = S[6], xid = S[7], ze = S[8], zed = S[9], mwx = S[10], mwz = S[11], gn = S[12], xgP = S[13], hcP = S[14], dpIn = S[15], dpOut = S[16], zs = S[17], zcue = S[18], rp = S[19] | 0, wj0 = S[20] | 0, t = S[21], drift = S[22], dragTq = S[23], bs = S[24], vtfS = S[25], gL = S[26], gR = S[27];
 
   const motor = e.motor, hpOn = e.hpOn, wSet = e.wSet, flut = p.flutter;
   for (let i = 0; i < N; i++) {
@@ -180,7 +181,11 @@ export function process(e, outL, outR, N) {
 
       // generator (velocity of tip relative to body on two 45-degree axes), coil+cable, RIAA
       const vxr = xid * CAZ - zed * SAZ, vzr = xid * SAZ + zed * CAZ;
-      const eL = (vxr + vzr) * IS2 + 1e-30, eR = (vxr - vzr) * IS2 + 1e-30;
+      const vL = (vxr + vzr) * IS2, vR = (vxr - vzr) * IS2;
+      // the cantilever flexes, so the armature at its root does not move exactly along the tip's 45-degree
+      // axes: each coil sees the derivative of the other channel's motion (crosstalk rising 6 dB/oct)
+      const eL = vL + kX * (vR - gR) + 1e-30, eR = vR + kX * (vL - gL) + 1e-30;
+      gL = vL; gR = vR;
       let y = lb0 * eL + l1; l1 = lb1 * eL - la1 * y + l2; l2 = lb2 * eL - la2 * y;
       let u = rb0 * y + r1; r1 = rb1 * y - ra1 * u + r2; r2 = rb2 * y - ra2 * u;
       ringL[rp] = u; ringL[rp + NT] = u;
@@ -216,9 +221,9 @@ export function process(e, outL, outR, N) {
     xi = xid = ze = zed = mwx = mwz = ald = zbd = 0; zb = Z_UP; zcue = Z_UP; e.cueUp = true;
     if (!(al === al)) al = ALPHA_REST;
     if (!(Math.abs(wp) < 60)) { wp = 0; thp = 0; bs = 0; dragTq = 0; }
-    l1 = l2 = l3 = l4 = r1 = r2 = r3 = r4 = 0; ringL.fill(0); ringR.fill(0); hcP = 1; e.blown = (e.blown | 0) + 1;
+    l1 = l2 = l3 = l4 = r1 = r2 = r3 = r4 = gL = gR = 0; ringL.fill(0); ringR.fill(0); hcP = 1; e.blown = (e.blown | 0) + 1;
   }
   fz[0] = l1; fz[1] = l2; fz[2] = l3; fz[3] = l4; fz[4] = r1; fz[5] = r2; fz[6] = r3; fz[7] = r4;
   fz[8] = s1; fz[9] = s2; fz[10] = s3; fz[11] = s4;
-  S[0] = thp; S[1] = wp; S[2] = al; S[3] = ald; S[4] = zb; S[5] = zbd; S[6] = xi; S[7] = xid; S[8] = ze; S[9] = zed; S[10] = mwx; S[11] = mwz; S[12] = gn; S[13] = xgP; S[14] = hcP; S[15] = dpIn; S[16] = dpOut; S[17] = zs; S[18] = zcue; S[19] = rp; S[20] = wj0; S[21] = t; S[22] = drift; S[23] = dragTq; S[24] = bs; S[25] = vtfS;
+  S[0] = thp; S[1] = wp; S[2] = al; S[3] = ald; S[4] = zb; S[5] = zbd; S[6] = xi; S[7] = xid; S[8] = ze; S[9] = zed; S[10] = mwx; S[11] = mwz; S[12] = gn; S[13] = xgP; S[14] = hcP; S[15] = dpIn; S[16] = dpOut; S[17] = zs; S[18] = zcue; S[19] = rp; S[20] = wj0; S[21] = t; S[22] = drift; S[23] = dragTq; S[24] = bs; S[25] = vtfS; S[26] = gL; S[27] = gR;
 }
