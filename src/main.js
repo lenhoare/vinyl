@@ -140,7 +140,7 @@ function initAudio() {
     node.port.onmessage = ({ data: m }) => {
       if (m.t === 'tel') { S.tel = m; S.tRecv = performance.now(); if (m.view) S.view = m.view; S.cue = m.cueUp; }
       else if (m.t === 'ready') {
-        S.ready = true; pushParams(); send({ t: 'view', on: true }); loadRecord(); start();
+        S.ready = true; pushParams(); pushAmp(); send({ t: 'view', on: true }); loadRecord(); start();
         $('d-rate').textContent = (m.os * m.fs).toLocaleString('en-US');
       } else if (m.t === 'log') console.warn(m.msg);
     };
@@ -182,9 +182,14 @@ function pushParams() {
   // 100% on the slider is 2 dB under unity: the cartridge lifts the treble by up to 1.9 dB, and bright peaks would clip
   send({ t: 'set', volume: 0.8 * +$('p-volume').value, stylus: $('p-stylus').value, vtf: +$('p-vtf').value, antiskate: +$('p-antiskate').value, hum: +$('p-hum').value });
 }
+function pushAmp() {
+  $('a-warmth').disabled = $('a-valve').value === '0';
+  send({ t: 'amp', valve: $('a-valve').value === '1', warmth: +$('a-warmth').value, bass: +$('a-bass').value, treble: +$('a-treble').value });
+}
+$('a-valve').addEventListener('change', pushAmp);
 for (const el of document.querySelectorAll('#ctl input[type=range]')) {
-  const out = el.parentElement.querySelector('output'), show = () => { out.textContent = el.id === 'p-volume' ? Math.round(el.value * 100) + '%' : (+el.value).toFixed(2); };
-  el.addEventListener('input', () => { show(); if (el.id.startsWith('p-')) pushParams(); }); show();
+  const out = el.parentElement.querySelector('output'), show = () => { out.textContent = el.id === 'p-volume' ? Math.round(el.value * 100) + '%' : /^a-(bass|treble)$/.test(el.id) ? (el.value > 0 ? '+' : '') + (+el.value).toFixed(1) : (+el.value).toFixed(2); };
+  el.addEventListener('input', () => { show(); if (el.id.startsWith('p-')) pushParams(); if (el.id.startsWith('a-')) pushAmp(); }); show();
 }
 $('p-stylus').addEventListener('change', pushParams);
 const toggle = (btn, panel, onChange) => $(btn).addEventListener('click', () => {

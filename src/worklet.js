@@ -1,5 +1,6 @@
 // AudioWorklet wrapper around the physics engine.
 import { Engine } from './engine.js';
+import { Amp } from './amp.js';
 import { TAU } from './dsp.js';
 import { alphaForRadius, stylusXY, TAB_PER_REV, GROOVE_W } from './geometry.js';
 
@@ -41,6 +42,7 @@ class Turntable extends AudioWorkletProcessor {
     super();
     try { warmup(sampleRate); } catch (err) { this.port.postMessage({ t: 'log', msg: 'warmup failed: ' + err }); }
     this.e = new Engine(sampleRate);
+    this.amp = new Amp(sampleRate);   // valve amplifier after the phono stage (src/amp.js)
     this.count = 0; this.view = false; this.tick = 0; this.busy = 0; this.frames = 0;
     this.now = globalThis.performance && performance.now ? () => performance.now() : () => Date.now();
     this.scratch = new Float32Array(128);
@@ -52,6 +54,7 @@ class Turntable extends AudioWorkletProcessor {
     switch (m.t) {
       case 'record': e.setRecord(m.rec); this.recSeq = m.seq; break;   // echoed in telemetry (main.js drawStats)
       case 'set': e.set(m); break;
+      case 'amp': this.amp.set(m); break;
       case 'motor': e.setMotor(m.on); break;
       case 'speed': e.setSpeed(m.rpm); break;
       case 'cue': e.setCue(m.up); break;
@@ -67,6 +70,7 @@ class Turntable extends AudioWorkletProcessor {
     const out = outputs[0], L = out[0], R = out[1] || this.scratch;
     const t0 = this.now();
     this.e.process(L, R, L.length);
+    this.amp.process(L, R, L.length);
     this.busy += this.now() - t0; this.frames += L.length;
     this.count += L.length;
     if (this.count >= 768) {
