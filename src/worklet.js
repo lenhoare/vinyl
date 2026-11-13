@@ -1,5 +1,6 @@
 // AudioWorklet wrapper around the physics engine.
 import { Engine } from './engine.js';
+import { Amp } from './amp.js';
 import { TAU } from './dsp.js';
 import { alphaForRadius, stylusXY, TAB_PER_REV, GROOVE_W } from './geometry.js';
 
@@ -41,6 +42,7 @@ class Turntable extends AudioWorkletProcessor {
     super();
     try { warmup(sampleRate); } catch (err) { this.port.postMessage({ t: 'log', msg: 'warmup failed: ' + err }); }
     this.e = new Engine(sampleRate);
+    this.amp = new Amp(sampleRate);   // valve amplifier after the phono stage (src/amp.js)
     this.count = 0; this.view = false; this.tick = 0; this.busy = 0; this.frames = 0;
     this.now = globalThis.performance && performance.now ? () => performance.now() : () => Date.now();
     this.scratch = new Float32Array(128);
@@ -50,8 +52,12 @@ class Turntable extends AudioWorkletProcessor {
   onMsg(m) {
     const e = this.e;
     switch (m.t) {
-      case 'record': e.setRecord(m.rec); this.recSeq = m.seq; break;   // echoed in telemetry (main.js drawStats)
+      case 'record': e.setRecord(m.rec); this.recSeq = m.seq; this.key = m.key; break;   // echoed in telemetry (main.js drawStats)
+      case 'wearLoad': if (m.key === this.key) e.reader.loadWear(m.blocks); break;      // this pressing's past plays
+      case 'wearClear': e.reader.clearWear(); break;
+      case 'wearFlush': this.saveWear(); break;
       case 'set': e.set(m); break;
+      case 'amp': this.amp.set(m); break;
       case 'motor': e.setMotor(m.on); break;
       case 'speed': e.setSpeed(m.rpm); break;
       case 'cue': e.setCue(m.up); break;
@@ -63,10 +69,16 @@ class Turntable extends AudioWorkletProcessor {
       case 'view': this.view = m.on; break;
     }
   }
+  // hand the blocks worn since last time to the page, which keeps them (IndexedDB) for this pressing
+  saveWear() {
+    const blocks = this.e.reader.takeDirty();
+    if (blocks.length && this.key) this.port.postMessage({ t: 'wearSave', key: this.key, blocks }, blocks.map((b) => b[2].buffer));
+  }
   process(inputs, outputs) {
     const out = outputs[0], L = out[0], R = out[1] || this.scratch;
     const t0 = this.now();
     this.e.process(L, R, L.length);
+    this.amp.process(L, R, L.length);
     this.busy += this.now() - t0; this.frames += L.length;
     this.count += L.length;
     if (this.count >= 768) {
@@ -76,6 +88,7 @@ class Turntable extends AudioWorkletProcessor {
       if (this.frames >= sampleRate / 2) { this.load = this.busy / 1000 / (this.frames / sampleRate); this.busy = 0; this.frames = 0; }
       tel.load = this.load;
       if (this.view && (this.tick++ & 1)) tel.view = this.e.grooveView();
+      if ((this.wearTick = (this.wearTick | 0) + 1) >= 300) { this.wearTick = 0; this.saveWear(); }   // every ~5 s
       this.port.postMessage(tel);
     }
     return true;

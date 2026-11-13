@@ -15,6 +15,10 @@ const IP = 0.017, KD = 0.4, KB = 10.7, TQMAX = 0.045, COFF = 0.004, BEAR_V = 2e-
 const KHAND = IP * 120 * 120, CHAND = 2 * IP * 120;
 const Z_UP = 5e-3, Z_DOWN = -2e-3, V_UP = 0.03, V_DOWN = 0.006, WH = 40, VE2 = 1e-6;
 const Z_TOP = 0.012, CV = 0.03;   // vertical travel stop, vertical bearing damping (N s/m)
+// The cutter's vertical axis leans back by this angle; the walls are stored in its frame. A stylus moving
+// along a different angle touches the groove ahead of / behind where it should by height * (tan a - tan b).
+export const CUT_VTA = 20;
+export const WEAR_P = 6.6e8, WEAR_K = 0.1;   // pressure vinyl recovers from (Pa); wear (m per N per m slid at 2x it)
 const TINY = 1e-22;   // keeps decaying states out of the (slow) subnormal range
 
 // Signed gap between the tip sphere and one side of the groove cross-section (wall, top corner or
@@ -31,13 +35,19 @@ function gapTo(x, hc, d) {
 
 export function process(e, outL, outR, N) {
   const p = e.p, rec = e.rec, OS = e.OS, fsF = e.fsF, dt = 1 / fsF, dtS = 1 / e.fs;
-  const C = e.C, H = e.H, NT = e.NT, ringL = e.ringL, ringR = e.ringR, wIn = e.wIn, wOut = e.wOut;
+  const C = e.C, H = e.H, NT = e.NT, ringL = e.ringL, ringR = e.ringR, wIn = e.wIn, wOut = e.wOut, kIn = e.kIn, kOut = e.kOut, pIn = e.pIn, pOut = e.pOut;
   const rTab = rec ? rec.rTab : null, thetaEnd = rec ? rec.thetaEnd : 0, kD = rec ? 2 * rec.spr / TAU : 0;
   const ex = rec ? rec.ecc[0] : 0, ey = rec ? rec.ecc[1] : 0, warp = rec ? rec.warp : [];
   W_ = rec ? rec.W : 30e-6; R_ = p.R;
   const { kc, k1, c0, mu, kH, mt, mEff, vtf } = p, cH = 1.5 * p.hc;
   const dC = (mt / (dt * dt) / (1.5 * kH)) ** 2, nC = kH * dC * Math.sqrt(dC), kC = 1.5 * kH * Math.sqrt(dC);
   const kmw = 1 - Math.exp(-dt * k1 / p.c1), Ih = mEff * LE * LE, kq = mEff * 9e4, cq = 2 * mEff * 300;
+  // Wear (Archard): where the Hertz contact pressure passes what the vinyl recovers from, the wall is worn
+  // away at the point the tip touches, by force x distance slid x the fraction over. p.wear scales it
+  // (1 = real time, 0 = off). pH * cbrt(N) is the peak pressure on a flat wall; the reader adds the crest's curvature.
+  const kW = p.wear * WEAR_K * dt, pH = p.pH, nLim = (WEAR_P / pH) ** 3;   // pressure over the limit <=> N * g^3 > nLim
+  const kX = p.xtalk * fsF;   // armature cross-coupling: leak = xtalk * d(other channel)/dt
+  const tV = Math.tan(p.vta * TAU / 360) - Math.tan(CUT_VTA * TAU / 360);   // VTA mismatch vs the cutter
   const tqAS = p.antiskate * LE, CAZ = Math.cos(p.azimuth), SAZ = Math.sin(p.azimuth);
   const [lb0, lb1, lb2, la1, la2] = e.lcr, [rb0, rb1, rb2, ra1, ra2] = e.riaaF, [sb0, sb1, sb2, sa1, sa2] = e.riaaS;
   const kv = onePole(1.5, e.fs), kr1 = onePole(30, e.fs), kr2 = onePole(6, e.fs), kdr = onePole(1.5, e.fs);
@@ -47,7 +57,7 @@ export function process(e, outL, outR, N) {
   let l1 = fz[0], l2 = fz[1], l3 = fz[2], l4 = fz[3], r1 = fz[4], r2 = fz[5], r3 = fz[6], r4 = fz[7];
   let s1 = fz[8], s2 = fz[9], s3 = fz[10], s4 = fz[11];
   const S = e.s;
-  let thp = S[0], wp = S[1], al = S[2], ald = S[3], zb = S[4], zbd = S[5], xi = S[6], xid = S[7], ze = S[8], zed = S[9], mwx = S[10], mwz = S[11], gn = S[12], xgP = S[13], hcP = S[14], dpIn = S[15], dpOut = S[16], zs = S[17], zcue = S[18], rp = S[19] | 0, wj0 = S[20] | 0, t = S[21], drift = S[22], dragTq = S[23], bs = S[24], vtfS = S[25];
+  let thp = S[0], wp = S[1], al = S[2], ald = S[3], zb = S[4], zbd = S[5], xi = S[6], xid = S[7], ze = S[8], zed = S[9], mwx = S[10], mwz = S[11], gn = S[12], xgP = S[13], hcP = S[14], dpIn = S[15], dpOut = S[16], zs = S[17], zcue = S[18], rp = S[19] | 0, wj0 = S[20] | 0, t = S[21], drift = S[22], dragTq = S[23], bs = S[24], vtfS = S[25], gL = S[26], gR = S[27], zvP = S[28];
 
   const motor = e.motor, hpOn = e.hpOn, wSet = e.wSet, flut = p.flutter;
   for (let i = 0; i < N; i++) {
@@ -132,15 +142,17 @@ export function process(e, outL, outR, N) {
       hc = zb + ze - zs;
       let Fr = 0, Fz = 0, Dg = 0; nIn = 0; nOut = 0;
       if (hc < R_ + 2e-6) {
-        let din = 0, dout = 0;
+        let din = 0, dout = 0, ciIn = -1, ciOut = -1, gpIn = 1, gpOut = 1;
         if (!flat && xg < 80e-6 && xg > -80e-6) {    // read the wall geometry under the tip
-          const pos = thT * kD, j = Math.floor(pos) | 0;
-          if (j - 5 < wj0 || j + 6 >= wj0 + WLEN) { wj0 = (j - 32) | 0; reader.fill(wj0, WLEN, wIn, wOut); }
+          const pos = (thT + tV * zvP / rB) * kD, j = Math.floor(pos) | 0;
+          if (j - 5 < wj0 || j + 6 >= wj0 + WLEN) { wj0 = (j - 32) | 0; reader.fill(wj0, WLEN, wIn, wOut, kIn, kOut, pIn, pOut); }
+          const jn = (pos - j < 0.5 ? j : j + 1) - wj0; ciIn = kIn[jn]; ciOut = kOut[jn]; gpIn = pIn[jn]; gpOut = pOut[jn];
           const f = (pos - j) * PH, ph = f | 0, g = f - ph, o = ph * DT, ib = (j - 5 - wj0) | 0;
           for (let q = 0; q < DT; q++) {
             let c = C[o + q]; c += g * (C[o + DT + q] - c);
             din += c * wIn[ib + q]; dout += c * wOut[ib + q];
           }
+          zvP = (din + dout) * IS2;                 // vertical part of the modulation: how high the tip rides
         }
         const vx = (xg - xgP) * fsF, vz = (hc - hcP) * fsF;
         let d1 = flat ? R_ - hc : -gapTo(xg, hc, din);              // inner wall (left channel)
@@ -150,6 +162,7 @@ export function process(e, outL, outR, N) {
           if (dpIn > 0) Nn *= Math.max(0, Math.min(3, 1 + cH * (d1 - dpIn) * fsF));
           const vt = vx * gNz - vz * gNx, vm = Math.sqrt(vg * vg + vt * vt + VE2), Ft = -mu * Nn * vt / vm;
           Fr += Nn * gNx + Ft * gNz; Fz += Nn * gNz - Ft * gNx; Dg += mu * Nn * vg / vm; nIn = Nn;
+          if (kW > 0 && ciIn >= 0 && Nn * gpIn * gpIn * gpIn > nLim) reader.addWear(0, ciIn, kW * Nn * vm * (pH * Math.cbrt(Nn) * gpIn / WEAR_P - 1));
         }
         dpIn = d1;
         if (!flat) {
@@ -159,6 +172,7 @@ export function process(e, outL, outR, N) {
             if (dpOut > 0) Nn *= Math.max(0, Math.min(3, 1 + cH * (d1 - dpOut) * fsF));
             const nx = -gNx, vt = vx * gNz - vz * nx, vm = Math.sqrt(vg * vg + vt * vt + VE2), Ft = -mu * Nn * vt / vm;
             Fr += Nn * nx + Ft * gNz; Fz += Nn * gNz - Ft * nx; Dg += mu * Nn * vg / vm; nOut = Nn;
+            if (kW > 0 && ciOut >= 0 && Nn * gpOut * gpOut * gpOut > nLim) reader.addWear(1, ciOut, kW * Nn * vm * (pH * Math.cbrt(Nn) * gpOut / WEAR_P - 1));
           }
           dpOut = d1;
         }
@@ -180,7 +194,11 @@ export function process(e, outL, outR, N) {
 
       // generator (velocity of tip relative to body on two 45-degree axes), coil+cable, RIAA
       const vxr = xid * CAZ - zed * SAZ, vzr = xid * SAZ + zed * CAZ;
-      const eL = (vxr + vzr) * IS2 + 1e-30, eR = (vxr - vzr) * IS2 + 1e-30;
+      const vL = (vxr + vzr) * IS2, vR = (vxr - vzr) * IS2;
+      // the cantilever flexes, so the armature at its root does not move exactly along the tip's 45-degree
+      // axes: each coil sees the derivative of the other channel's motion (crosstalk rising 6 dB/oct)
+      const eL = vL + kX * (vR - gR) + 1e-30, eR = vR + kX * (vL - gL) + 1e-30;
+      gL = vL; gR = vR;
       let y = lb0 * eL + l1; l1 = lb1 * eL - la1 * y + l2; l2 = lb2 * eL - la2 * y;
       let u = rb0 * y + r1; r1 = rb1 * y - ra1 * u + r2; r2 = rb2 * y - ra2 * u;
       ringL[rp] = u; ringL[rp + NT] = u;
@@ -216,9 +234,9 @@ export function process(e, outL, outR, N) {
     xi = xid = ze = zed = mwx = mwz = ald = zbd = 0; zb = Z_UP; zcue = Z_UP; e.cueUp = true;
     if (!(al === al)) al = ALPHA_REST;
     if (!(Math.abs(wp) < 60)) { wp = 0; thp = 0; bs = 0; dragTq = 0; }
-    l1 = l2 = l3 = l4 = r1 = r2 = r3 = r4 = 0; ringL.fill(0); ringR.fill(0); hcP = 1; e.blown = (e.blown | 0) + 1;
+    l1 = l2 = l3 = l4 = r1 = r2 = r3 = r4 = gL = gR = 0; ringL.fill(0); ringR.fill(0); hcP = 1; e.blown = (e.blown | 0) + 1;
   }
   fz[0] = l1; fz[1] = l2; fz[2] = l3; fz[3] = l4; fz[4] = r1; fz[5] = r2; fz[6] = r3; fz[7] = r4;
   fz[8] = s1; fz[9] = s2; fz[10] = s3; fz[11] = s4;
-  S[0] = thp; S[1] = wp; S[2] = al; S[3] = ald; S[4] = zb; S[5] = zbd; S[6] = xi; S[7] = xid; S[8] = ze; S[9] = zed; S[10] = mwx; S[11] = mwz; S[12] = gn; S[13] = xgP; S[14] = hcP; S[15] = dpIn; S[16] = dpOut; S[17] = zs; S[18] = zcue; S[19] = rp; S[20] = wj0; S[21] = t; S[22] = drift; S[23] = dragTq; S[24] = bs; S[25] = vtfS;
+  S[0] = thp; S[1] = wp; S[2] = al; S[3] = ald; S[4] = zb; S[5] = zbd; S[6] = xi; S[7] = xid; S[8] = ze; S[9] = zed; S[10] = mwx; S[11] = mwz; S[12] = gn; S[13] = xgP; S[14] = hcP; S[15] = dpIn; S[16] = dpOut; S[17] = zs; S[18] = zcue; S[19] = rp; S[20] = wj0; S[21] = t; S[22] = drift; S[23] = dragTq; S[24] = bs; S[25] = vtfS; S[26] = gL; S[27] = gR; S[28] = zvP;
 }

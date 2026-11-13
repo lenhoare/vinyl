@@ -196,6 +196,7 @@
     <div><span>left wall</span><b id="s-nl">-</b></div><div><span>right wall</span><b id="s-nr">-</b></div>
     <div><span>mistracking</span><b id="s-loss">-</b></div><div><span>stylus height</span><b id="s-z">-</b></div>
     <div><span>cantilever</span><b id="s-xi">-</b></div><div><span>DSP load</span><b id="s-load">-</b></div>
+    <div><span>deepest wear</span><b id="s-wear">-</b></div>
   </div>
 </section>
 
@@ -208,7 +209,14 @@
   <div class="row"><select id="p-stylus"><option value="elliptical">Elliptical 0.3 x 0.7 mil</option><option value="conical">Conical 0.7 mil</option><option value="microline">Micro-line</option></select></div>
   <div class="row"><label>Tracking g</label><input id="p-vtf" type="range" min="0.2" max="4" step="0.05" value="1.8"><output></output></div>
   <div class="row"><label>Anti-skate</label><input id="p-antiskate" type="range" min="0" max="4" step="0.05" value="1.8"><output></output></div>
+  <div class="row"><label>VTA °</label><input id="p-vta" type="range" min="10" max="30" step="0.5" value="20"><output></output></div>
   <div class="row"><label>Mains hum</label><input id="p-hum" type="range" min="0" max="3" step="0.05" value="0"><output></output></div>
+
+  <h2>Amplifier</h2>
+  <div class="row"><select id="a-valve"><option value="1">Valve: 12AX7 pre, EL34 push-pull</option><option value="0">Solid state (clean)</option></select></div>
+  <div class="row"><label>Warmth</label><input id="a-warmth" type="range" min="0" max="1" step="0.01" value="0.35"><output></output></div>
+  <div class="row"><label>Bass dB</label><input id="a-bass" type="range" min="-12" max="12" step="0.5" value="0"><output></output></div>
+  <div class="row"><label>Treble dB</label><input id="a-treble" type="range" min="-12" max="12" step="0.5" value="0"><output></output></div>
 
   <h2>This pressing</h2>
   <div class="row"><label>Surface</label><input id="c-noise" type="range" min="0" max="4" step="0.05" value="1"><output></output></div>
@@ -216,6 +224,7 @@
   <div class="row"><label>Scratches</label><input id="c-scratches" type="range" min="0" max="2" step="0.05" value="0.2"><output></output></div>
   <div class="row"><label>Warp mm</label><input id="c-warp" type="range" min="0" max="2" step="0.05" value="0.3"><output></output></div>
   <div class="row"><label>Off-centre</label><input id="c-offCenter" type="range" min="0" max="1.5" step="0.05" value="0.15"><output></output></div>
+  <div class="row"><label>Wear</label><select id="p-wear"><option value="0">None</option><option value="1" selected>Real time</option><option value="10">10x</option><option value="100">100x</option><option value="1000">1000x</option></select><button id="b-unwear">Undo wear</button></div>
   <div class="row"><button id="b-press">Press again</button><label class="file" for="f-audio">Cut a file</label><input id="f-audio" type="file" accept="audio/*" multiple hidden></div>
   <div class="row"><button id="b-bump">Knock the table</button></div>
 </section>
