@@ -18,6 +18,7 @@ const Z_TOP = 0.012, CV = 0.03;   // vertical travel stop, vertical bearing damp
 // The cutter's vertical axis leans back by this angle; the walls are stored in its frame. A stylus moving
 // along a different angle touches the groove ahead of / behind where it should by height * (tan a - tan b).
 export const CUT_VTA = 20;
+export const WEAR_P = 6.6e8, WEAR_K = 0.1;   // pressure vinyl recovers from (Pa); wear (m per N per m slid at 2x it)
 const TINY = 1e-22;   // keeps decaying states out of the (slow) subnormal range
 
 // Signed gap between the tip sphere and one side of the groove cross-section (wall, top corner or
@@ -34,13 +35,17 @@ function gapTo(x, hc, d) {
 
 export function process(e, outL, outR, N) {
   const p = e.p, rec = e.rec, OS = e.OS, fsF = e.fsF, dt = 1 / fsF, dtS = 1 / e.fs;
-  const C = e.C, H = e.H, NT = e.NT, ringL = e.ringL, ringR = e.ringR, wIn = e.wIn, wOut = e.wOut;
+  const C = e.C, H = e.H, NT = e.NT, ringL = e.ringL, ringR = e.ringR, wIn = e.wIn, wOut = e.wOut, kIn = e.kIn, kOut = e.kOut, pIn = e.pIn, pOut = e.pOut;
   const rTab = rec ? rec.rTab : null, thetaEnd = rec ? rec.thetaEnd : 0, kD = rec ? 2 * rec.spr / TAU : 0;
   const ex = rec ? rec.ecc[0] : 0, ey = rec ? rec.ecc[1] : 0, warp = rec ? rec.warp : [];
   W_ = rec ? rec.W : 30e-6; R_ = p.R;
   const { kc, k1, c0, mu, kH, mt, mEff, vtf } = p, cH = 1.5 * p.hc;
   const dC = (mt / (dt * dt) / (1.5 * kH)) ** 2, nC = kH * dC * Math.sqrt(dC), kC = 1.5 * kH * Math.sqrt(dC);
   const kmw = 1 - Math.exp(-dt * k1 / p.c1), Ih = mEff * LE * LE, kq = mEff * 9e4, cq = 2 * mEff * 300;
+  // Wear (Archard): where the Hertz contact pressure passes what the vinyl recovers from, the wall is worn
+  // away at the point the tip touches, by force x distance slid x the fraction over. p.wear scales it
+  // (1 = real time, 0 = off). pH * cbrt(N) is the peak pressure on a flat wall; the reader adds the crest's curvature.
+  const kW = p.wear * WEAR_K * dt, pH = p.pH, nLim = (WEAR_P / pH) ** 3;   // pressure over the limit <=> N * g^3 > nLim
   const kX = p.xtalk * fsF;   // armature cross-coupling: leak = xtalk * d(other channel)/dt
   const tV = Math.tan(p.vta * TAU / 360) - Math.tan(CUT_VTA * TAU / 360);   // VTA mismatch vs the cutter
   const tqAS = p.antiskate * LE, CAZ = Math.cos(p.azimuth), SAZ = Math.sin(p.azimuth);
@@ -137,10 +142,11 @@ export function process(e, outL, outR, N) {
       hc = zb + ze - zs;
       let Fr = 0, Fz = 0, Dg = 0; nIn = 0; nOut = 0;
       if (hc < R_ + 2e-6) {
-        let din = 0, dout = 0;
+        let din = 0, dout = 0, ciIn = -1, ciOut = -1, gpIn = 1, gpOut = 1;
         if (!flat && xg < 80e-6 && xg > -80e-6) {    // read the wall geometry under the tip
           const pos = (thT + tV * zvP / rB) * kD, j = Math.floor(pos) | 0;
-          if (j - 5 < wj0 || j + 6 >= wj0 + WLEN) { wj0 = (j - 32) | 0; reader.fill(wj0, WLEN, wIn, wOut); }
+          if (j - 5 < wj0 || j + 6 >= wj0 + WLEN) { wj0 = (j - 32) | 0; reader.fill(wj0, WLEN, wIn, wOut, kIn, kOut, pIn, pOut); }
+          const jn = (pos - j < 0.5 ? j : j + 1) - wj0; ciIn = kIn[jn]; ciOut = kOut[jn]; gpIn = pIn[jn]; gpOut = pOut[jn];
           const f = (pos - j) * PH, ph = f | 0, g = f - ph, o = ph * DT, ib = (j - 5 - wj0) | 0;
           for (let q = 0; q < DT; q++) {
             let c = C[o + q]; c += g * (C[o + DT + q] - c);
@@ -156,6 +162,7 @@ export function process(e, outL, outR, N) {
           if (dpIn > 0) Nn *= Math.max(0, Math.min(3, 1 + cH * (d1 - dpIn) * fsF));
           const vt = vx * gNz - vz * gNx, vm = Math.sqrt(vg * vg + vt * vt + VE2), Ft = -mu * Nn * vt / vm;
           Fr += Nn * gNx + Ft * gNz; Fz += Nn * gNz - Ft * gNx; Dg += mu * Nn * vg / vm; nIn = Nn;
+          if (kW > 0 && ciIn >= 0 && Nn * gpIn * gpIn * gpIn > nLim) reader.addWear(0, ciIn, kW * Nn * vm * (pH * Math.cbrt(Nn) * gpIn / WEAR_P - 1));
         }
         dpIn = d1;
         if (!flat) {
@@ -165,6 +172,7 @@ export function process(e, outL, outR, N) {
             if (dpOut > 0) Nn *= Math.max(0, Math.min(3, 1 + cH * (d1 - dpOut) * fsF));
             const nx = -gNx, vt = vx * gNz - vz * nx, vm = Math.sqrt(vg * vg + vt * vt + VE2), Ft = -mu * Nn * vt / vm;
             Fr += Nn * nx + Ft * gNz; Fz += Nn * gNz - Ft * nx; Dg += mu * Nn * vg / vm; nOut = Nn;
+            if (kW > 0 && ciOut >= 0 && Nn * gpOut * gpOut * gpOut > nLim) reader.addWear(1, ciOut, kW * Nn * vm * (pH * Math.cbrt(Nn) * gpOut / WEAR_P - 1));
           }
           dpOut = d1;
         }

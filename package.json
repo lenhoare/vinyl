@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "lathe": "node lathe.mjs all",
-    "test": "node test/basic.mjs && node test/response.mjs && node test/noise.mjs && node test/scenario.mjs && node test/amp.mjs && node test/crosstalk.mjs && node test/vta.mjs",
+    "test": "node test/basic.mjs && node test/response.mjs && node test/noise.mjs && node test/scenario.mjs && node test/amp.mjs && node test/crosstalk.mjs && node test/vta.mjs && node test/wear.mjs",
     "bench": "node test/bench.mjs"
   }
 }

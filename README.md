@@ -10,6 +10,9 @@ This is a _physical simulation_ of a record player's mechanics, which happen to 
 
 - **"Real", procedural flaws**: hiss and crackle are roughness and dust on the groove walls. A scratch ticks once per turn because the needle crosses it once per turn. Treble dulls toward the label because the groove moves slower there. Knock the table and it skips.
 - **Real physics, in real time**: a 2 DOF stylus tip on [Hertzian](https://en.wikipedia.org/wiki/Contact_mechanics#Hertzian_theory_of_non-adhesive_elastic_contact) wall contacts with friction, oversampled inside an `AudioWorklet`, with platter inertia, arm kinematics, [RIAA de-emphasis](https://en.wikipedia.org/wiki/RIAA_equalization) and three stylus shapes (conical, elliptical, micro-line).
+- **Records wear as you play them**: where the Hertz contact pressure on a crest passes what the vinyl springs back from, the wall wears away at the exact point the tip touches. Heavy tracking, blunt tips, loud treble and the inner grooves wear fastest; a micro-line at 1.8 g barely marks it. Each pressing keeps its wear in your browser; _Wear_ speeds it up (up to 1000x) and _Undo wear_ puts it back.
+- **A valve amplifier after the phono stage**: a 12AX7 preamp (2nd harmonic), a push-pull EL34 power stage with supply sag and an output transformer, and bass/treble shelves ([`src/amp.js`](src/amp.js)). _Warmth_ changes the character, not the loudness; _Solid state_ bypasses it.
+- **Cartridge details**: channel separation set by azimuth and by the cantilever flexing (crosstalk rising with frequency), and a _VTA_ control: a stylus that rides at a different vertical angle from the cutter's 20 degrees reads the vertical modulation early or late.
 - **Bring your own audio**: _Cut a file_ runs the lathe on anything you drop in, in a worker, in the browser. _Press again_ makes a dirtier (or cleaner) copy of the same cut.
 - **No dependencies, no bundler**: plain ES modules, WebGL2 and Web Audio. The build copies files.
 
@@ -25,7 +28,7 @@ There's nothing to install. Node 22+ is enough for the build and the tests:
 
 ```bash
 $ npm run build   # dist/: index.html, src/, assets/, records/
-$ npm test        # offline checks of the physics: response, distortion, surface noise, cue, skip
+$ npm test        # offline checks of the physics: response, distortion, surface noise, cue, skip, amp, crosstalk, VTA, wear
 $ npm run bench   # CPU cost of the engine per second of audio
 ```
 

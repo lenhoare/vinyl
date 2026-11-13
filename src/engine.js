@@ -30,6 +30,7 @@ export class Engine {
     this.H = makeLowpass(this.NT, 0.96 / this.OS, 7);       // decimation filter
     this.ringL = new Float32Array(2 * this.NT); this.ringR = new Float32Array(2 * this.NT); this.rp = 0;
     this.wIn = new Float32Array(WLEN); this.wOut = new Float32Array(WLEN); this.wj0 = -1e9;
+    this.kIn = new Int32Array(WLEN); this.kOut = new Int32Array(WLEN); this.pIn = new Float32Array(WLEN); this.pOut = new Float32Array(WLEN);   // where on each wall the tip touches
     this.rand = rng(12345);
     this.p = {
       vtf: 1.8e-3 * G, antiskate: 0, mEff: 0.0185,
@@ -39,6 +40,7 @@ export class Engine {
       vta: 20,                                              // vertical tracking angle (deg); the cutter's is 20
       xtalk: 2.2e-6,                                        // armature cross-coupling (s): -17 dB at 10 kHz
       Lc: 0.45, Rc: 600, Cl: 200e-12, Rl: 47000,            // cartridge coil + cable + preamp load
+      wear: 1,                                              // groove wear rate (1 = real time, 0 = none)
       volume: 1, hum: 0, rumble: 1, flutter: 1, preNoise: 1e-5,
     };
     this.setAntiskate(1.8);
@@ -65,6 +67,7 @@ export class Engine {
     this.stylus = key;
     this.p.mt = s.mt; this.p.R = s.seat;
     this.p.kH = (4 / 3) * E_VINYL * Math.sqrt(Math.sqrt(s.scan * s.bear));   // Hertz: F = kH * delta^1.5
+    this.p.pH = Math.cbrt(6 * E_VINYL * E_VINYL / (Math.PI ** 3 * s.scan * s.bear));   // Hertz: peak pressure = pH * F^(1/3)
     this.reader.setScan(s.scan);
     this.wj0 = -1e9;
     this.updateElectrical();
@@ -84,7 +87,7 @@ export class Engine {
     if (o.stylus) this.setStylus(o.stylus);
     if (o.vtf != null) this.setVtf(o.vtf);
     if (o.antiskate != null) this.setAntiskate(o.antiskate);
-    for (const k of ['volume', 'hum', 'rumble', 'flutter', 'vta']) if (o[k] != null) this.p[k] = o[k];
+    for (const k of ['volume', 'hum', 'rumble', 'flutter', 'vta', 'wear']) if (o[k] != null) this.p[k] = o[k];
     if (o.capacitance != null) { this.p.Cl = o.capacitance * 1e-12; this.updateElectrical(); }
   }
 
@@ -111,7 +114,7 @@ export class Engine {
       cueUp: this.cueUp, motor: this.motor, hand: this.hOn, auto: this.auto,
       theta: t.theta, r: t.r, err: t.err, vg: t.vg, hc: t.hc, xg: t.xg,
       nIn: t.nIn / c, nOut: t.nOut / c, loss: t.loss / c, peak: t.peak,
-      blocks: this.reader.computed,
+      blocks: this.reader.computed, wear: this.reader.maxWear,
     };
     t.nIn = t.nOut = t.loss = t.cnt = t.peak = 0;
     return out;

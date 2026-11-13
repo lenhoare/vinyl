@@ -52,10 +52,43 @@ function loadRecord() {
   // so a packet about the previous record can't be read against this one
   S.rec = { tracks: rec.tracks, thetaLock: rec.thetaLock, pick: S.pendingPick, seq: S.recSeq = (S.recSeq || 0) + 1 };
   send({ t: 'cue', up: true });
-  send({ t: 'record', rec, seq: S.rec.seq }, [rec.wallIn.buffer, rec.wallOut.buffer]);
+  const key = S.wearKey = fingerprint(rec);
+  send({ t: 'record', rec, seq: S.rec.seq, key }, [rec.wallIn.buffer, rec.wallOut.buffer]);
+  wearLoad(key).then((blocks) => { if (blocks.length && key === S.wearKey) send({ t: 'wearLoad', key, blocks }); }).catch(() => {});
   S.loaded = true;
   if (S.started) play(); else start();
 }
+// ---------- wear: each pressing keeps the wear from every time it was played, in this browser ----------
+// A pressing is known by its groove (cut + seed + condition), so pressing again gives a fresh copy.
+function fingerprint(rec) {
+  let h = 0x811c9dc5 ^ rec.n;
+  const u = (a) => new Uint32Array(a.buffer, a.byteOffset, a.length), A = u(rec.wallIn), B = u(rec.wallOut);
+  for (let k = 0; k < 512; k++) { const i = Math.floor((k + 0.5) * rec.n / 512); h = Math.imul(h ^ A[i], 16777619); h = Math.imul(h ^ B[i], 16777619); }
+  return rec.n + ':' + (h >>> 0).toString(36);
+}
+let wearDb = null;
+const db = () => wearDb ||= new Promise((ok, no) => {
+  const r = indexedDB.open('vinyl', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('wear');   // key [pressing, wall, block] -> Float32Array (m)
+  r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+});
+const range = (key) => IDBKeyRange.bound([key, 0, 0], [key, 1, Infinity]);
+async function wearLoad(key) {
+  const st = (await db()).transaction('wear').objectStore('wear'), out = [];
+  return new Promise((ok, no) => {
+    const c = st.openCursor(range(key));
+    c.onsuccess = () => { const cur = c.result; if (!cur) return ok(out); out.push([cur.key[1], cur.key[2], cur.value]); cur.continue(); };
+    c.onerror = () => no(c.error);
+  });
+}
+async function wearSave(key, blocks) {
+  const st = (await db()).transaction('wear', 'readwrite').objectStore('wear');
+  for (const [wall, b, w] of blocks) st.put(w, [key, wall, b]);
+}
+async function wearForget(key) { (await db()).transaction('wear', 'readwrite').objectStore('wear').delete(range(key)); }
+addEventListener('pagehide', () => send({ t: 'wearFlush' }));
+addEventListener('visibilitychange', () => { if (document.hidden) send({ t: 'wearFlush' }); });
+
 const play = () => { setMotor(true); setTimeout(() => send({ t: 'cueTo', al: alphaForRadius(R_LEADIN - 0.0012) }), 400); };
 // Nothing moves until all three are true: the user powered on, the engine is warm, and a record is in it.
 function start() {
@@ -142,7 +175,8 @@ function initAudio() {
       else if (m.t === 'ready') {
         S.ready = true; pushParams(); pushAmp(); send({ t: 'view', on: true }); loadRecord(); start();
         $('d-rate').textContent = (m.os * m.fs).toLocaleString('en-US');
-      } else if (m.t === 'log') console.warn(m.msg);
+      } else if (m.t === 'wearSave') wearSave(m.key, m.blocks).catch((err) => console.warn('could not keep the wear', err));
+      else if (m.t === 'log') console.warn(m.msg);
     };
     node.connect(ctx.destination);
     if (!S.on && ctx.state === 'running') await ctx.suspend();   // some browsers start it unasked; stay silent until power-on
@@ -180,7 +214,7 @@ if (!OG) initAudio().catch(() => {});   // best effort before any gesture; the c
 function setMotor(on) { S.motor = on; send({ t: 'motor', on }); $('b-start').textContent = on ? 'Stop' : 'Start'; $('b-start').classList.toggle('on', on); }
 function pushParams() {
   // 100% on the slider is 2 dB under unity: the cartridge lifts the treble by up to 1.9 dB, and bright peaks would clip
-  send({ t: 'set', volume: 0.8 * +$('p-volume').value, stylus: $('p-stylus').value, vtf: +$('p-vtf').value, antiskate: +$('p-antiskate').value, vta: +$('p-vta').value, hum: +$('p-hum').value });
+  send({ t: 'set', volume: 0.8 * +$('p-volume').value, stylus: $('p-stylus').value, vtf: +$('p-vtf').value, antiskate: +$('p-antiskate').value, vta: +$('p-vta').value, hum: +$('p-hum').value, wear: +$('p-wear').value });
 }
 function pushAmp() {
   $('a-warmth').disabled = $('a-valve').value === '0';
@@ -192,6 +226,8 @@ for (const el of document.querySelectorAll('#ctl input[type=range]')) {
   el.addEventListener('input', () => { show(); if (el.id.startsWith('p-')) pushParams(); if (el.id.startsWith('a-')) pushAmp(); }); show();
 }
 $('p-stylus').addEventListener('change', pushParams);
+$('p-wear').addEventListener('change', pushParams);
+$('b-unwear').addEventListener('click', () => { send({ t: 'wearClear' }); if (S.wearKey) wearForget(S.wearKey).catch(() => {}); });
 const toggle = (btn, panel, onChange) => $(btn).addEventListener('click', () => {
   const open = $(panel).hidden; $(panel).hidden = !open; $(btn).setAttribute('aria-pressed', String(open)); if (onChange) onChange(open);
 });
@@ -397,6 +433,7 @@ function drawNumbers(t) {
   $('s-err').textContent = (Math.asin(Math.max(-1, Math.min(1, t.err))) * 180 / Math.PI).toFixed(2) + '°';
   $('s-nl').textContent = (t.nIn * 1000).toFixed(1) + ' mN'; $('s-nr').textContent = (t.nOut * 1000).toFixed(1) + ' mN';
   $('s-loss').textContent = (t.loss * 100).toFixed(0) + ' %';
+  $('s-wear').textContent = t.wear > 0 ? (t.wear * 1e9).toFixed(t.wear < 1e-8 ? 1 : 0) + ' nm' : 'none';
   $('s-xi').textContent = (t.xi * 1e6).toFixed(0) + '/' + (t.ze * 1e6).toFixed(0) + ' µm'; $('s-load').textContent = t.load != null ? (t.load * 100).toFixed(0) + ' %' : '-';
   $('s-z').textContent = t.hc > 1e-4 ? (t.hc * 1000).toFixed(1) + ' mm' : (t.hc * 1e6).toFixed(1) + ' µm';   // above the local surface
 }
